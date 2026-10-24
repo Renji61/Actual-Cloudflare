@@ -1,0 +1,37 @@
+# Keeps the repository's Contributors list to the owner: every commit pushed to main or
+# proposed in a pull request must be authored by the owner, and commit messages must not
+# carry Co-authored-by or Signed-off-by trailers (GitHub counts those as contributors).
+name: Contributors
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  contributors:
+    runs-on: ubuntu-latest
+    env:
+      OWNER_EMAIL: 617919+Renji61@users.noreply.github.com
+      BEFORE: ${{ github.event.before }}
+      AFTER: ${{ github.sha }}
+      BASE: ${{ github.event.pull_request.base.sha }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check authors and trailers
+        run: |
+          if [ -n "$BASE" ]; then RANGE="$BASE..$HEAD"
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then RANGE="$AFTER"
+          else RANGE="$BEFORE..$AFTER"; fi
+          bad=0
+          for c in $(git rev-list "$RANGE"); do
+            ae=$(git log -1 --format=%ae "$c"); ce=$(git log -1 --format=%ce "$c")
+            if [ "$ae" != "$OWNER_EMAIL" ]; then echo "::error::$c author is $ae"; bad=1; fi
+            if [ "$ce" != "$OWNER_EMAIL" ] && [ "$ce" != noreply@github.com ]; then echo "::error::$c committer is $ce"; bad=1; fi
+            if git log -1 --format=%B "$c" | grep -qiE '^(co-authored-by|signed-off-by):'; then echo "::error::$c has a co-author or sign-off trailer"; bad=1; fi
+          done
+          [ "$bad" = 0 ] && echo "All commits in $RANGE are the owner's."
+          exit "$bad"

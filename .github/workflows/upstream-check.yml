@@ -1,0 +1,80 @@
+# Comments on a PR that changes the @actual-app/web version with
+# the upstream diff of the files this server was ported from, and labels it
+# `safe-update` (no diff) or `needs-port` (diff, missing file, or tags not comparable).
+# It never merges or approves anything.
+#
+# Why pull_request_target: on `pull_request`, PRs from bots and forks get a read-only token and
+# could not comment or label. This is safe here because the job never checks out or
+# runs PR code. It only reads package.json from base and head through the API and
+# parses it with jq. The two versions are checked against a strict regex before use,
+# values reach the shell through env vars (never interpolated), and the token is
+# limited to the permissions below. Like any pull_request_target workflow, it runs
+# the copy on the default branch.
+name: Upstream check
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths: [package.json]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+concurrency:
+  group: upstream-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Compare upstream
+        run: |
+          # shellcheck disable=SC2086  # $PATHS is deliberately split into arguments
+          ver() { gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/package.json?ref=$2" \
+            | jq -r '.devDependencies["@actual-app/web"] // empty'; }
+          OLD=$(ver "$BASE_REPO" "$BASE_SHA"); NEW=$(ver "$HEAD_REPO" "$HEAD_SHA")
+          [ "$OLD" = "$NEW" ] && { echo "@actual-app/web unchanged"; exit 0; }
+          RE='^[0-9]+\.[0-9]+\.[0-9]+$'
+          PATHS="packages/sync-server/src/app-sync.ts packages/sync-server/src/app-sync/validation.js packages/sync-server/src/sync-simple.js packages/sync-server/src/app-account.js packages/sync-server/src/accounts/password.js packages/crdt/src"
+          NOTE=""; STAT=""; DIFF=""
+          if [[ ! $OLD =~ $RE || ! $NEW =~ $RE ]]; then
+            NOTE="Could not compare: versions must be exact releases (got \`${OLD:-none}\` -> \`${NEW:-none}\`)."
+          else
+            git init -q up && cd up && git remote add origin https://github.com/actualbudget/actual
+            if ! git fetch -q --depth=1 --filter=blob:none origin tag "v$OLD" tag "v$NEW"; then
+              NOTE="Could not compare: tag \`v$OLD\` or \`v$NEW\` is missing upstream (a nightly build?)."
+            else
+              for p in $PATHS; do
+                [ -n "$(git ls-tree -r "v$NEW" -- "$p")" ] || NOTE="$NOTE"$'\n'"- \`$p\` no longer exists at v$NEW (renamed or removed): needs a manual port."
+              done
+              STAT=$(git diff --stat "v$OLD" "v$NEW" -- $PATHS)
+              DIFF=$(git diff "v$OLD" "v$NEW" -- $PATHS | head -n 300 | head -c 40000)
+            fi
+          fi
+          if [ -z "$NOTE$STAT" ]; then ADD=safe-update; DEL=needs-port; VERDICT="No relevant upstream changes: safe update."
+          else ADD=needs-port; DEL=safe-update; VERDICT="Needs a port: review the changes below and update \`src/server.ts\` or \`src/password.ts\`."; fi
+          {
+            echo "<!-- upstream-check -->"
+            echo "### Upstream check: \`$OLD\` -> \`$NEW\`"
+            echo; echo "**$VERDICT**"
+            [ -n "$NOTE" ] && { echo; echo "$NOTE"; }
+            [ -n "$STAT" ] && { echo; echo '```'; echo "$STAT"; echo '```'; }
+            [ -n "$DIFF" ] && { echo; echo "<details><summary>Diff (first 300 lines)</summary>"; echo; echo '```diff'; echo "$DIFF"; echo '```'; echo "</details>"; }
+            echo; echo "[Full upstream compare](https://github.com/actualbudget/actual/compare/v$OLD...v$NEW)"
+          } > "$RUNNER_TEMP/body.md"
+          gh label create safe-update --force --color 0e8a16 --description "Upstream release needs no server changes"
+          gh label create needs-port --force --color d93f0b --description "Upstream release changed ported files"
+          gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$ADD" > /dev/null
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/$DEL" > /dev/null 2>&1 || true
+          ID=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- upstream-check -->"))) | .id' | head -n 1)
+          if [ -n "$ID" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@"$RUNNER_TEMP/body.md" > /dev/null
+          else gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/body.md" > /dev/null; fi

@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "actual-budget",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+
+  // A deploy gets a *.workers.dev URL. Preview URLs stay off.
+  "workers_dev": true,
+  "preview_urls": false,
+  // To use your own domain instead (then set "workers_dev" to false):
+  // "routes": [{ "pattern": "budget.example.com", "custom_domain": true }],
+
+  // The official Actual web app, copied in by `npm run prepare-web`.
+  // Anything that is not an API path is served from here directly,
+  // and unknown paths fall back to index.html for the app's own routing.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/account/*",
+      "/sync/*",
+      "/admin/*",
+      "/openid/*",
+      "/secret",
+      "/secret/*",
+      "/gocardless/*",
+      "/simplefin/*",
+      "/pluggyai/*",
+      "/akahu/*",
+      "/enablebanking/*",
+      "/cors-proxy/*",
+      "/info",
+      "/mode",
+      "/metrics",
+      "/health"
+    ]
+  },
+
+  // Login, sessions, the budget-file list and sync history.
+  "durable_objects": {
+    "bindings": [{ "name": "ACTUAL", "class_name": "ActualStore" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActualStore"] }],
+
+  // The budget files themselves (encrypted if you turn on encryption).
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "actual-budget-files" }],
+
+  // Secrets are not vars. Set them with `npx wrangler secret put <NAME>`:
+  // SETUP_PASSWORD (optional) is the starting password, so nobody else can claim a fresh
+  // deploy first; ADMIN_RESET_TOKEN (optional) enables POST /account/reset-password.
+  "vars": {
+    // "never", or the number of minutes a login stays valid.
+    "TOKEN_EXPIRATION": "never",
+    // Largest budget upload or sync request, in MB.
+    "UPLOAD_LIMIT_MB": "50"
+  },
+
+  "observability": { "enabled": true }
+}

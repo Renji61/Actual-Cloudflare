@@ -1,0 +1,8 @@
+# Secrets for this Worker. Copy to .dev.vars for `npm run dev`; in production
+# set them with `npx wrangler secret put <NAME>` (the Deploy to Cloudflare
+# button prompts for them).
+
+# Password for your budgets. If set before the first start, the server sets
+# itself up with it, so nobody else can claim the first-visit "set password"
+# screen. Ignored once a password exists. Use a long, unique value.
+SETUP_PASSWORD=

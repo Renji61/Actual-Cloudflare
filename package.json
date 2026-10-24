@@ -1,0 +1,56 @@
+{
+  "name": "actual-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Actual Budget's sync server (core features) running on Cloudflare Workers, Durable Objects and R2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Renji61/Actual-Cloudflare.git"
+  },
+  "homepage": "https://github.com/Renji61/Actual-Cloudflare#readme",
+  "bugs": {
+    "url": "https://github.com/Renji61/Actual-Cloudflare/issues"
+  },
+  "keywords": [
+    "actual-budget",
+    "cloudflare-workers",
+    "durable-objects",
+    "r2",
+    "sync-server",
+    "budgeting",
+    "self-hosted",
+    "serverless"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "prepare-web": "node scripts/prepare-web.mjs",
+    "build": "npm run prepare-web",
+    "dev": "npm run prepare-web && wrangler dev",
+    "deploy": "npm run prepare-web && wrangler deploy",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0",
+    "murmurhash": "^2.0.1",
+    "uuid": "^14.0.3"
+  },
+  "devDependencies": {
+    "@actual-app/web": "26.10.0",
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.152.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SETUP_PASSWORD": {
+        "description": "The password for your budgets. Set it now so nobody else can claim the first-visit \"set password\" screen. Pick something long and unique, e.g. the output of `openssl rand -base64 24`. It is ignored once a password exists."
+      }
+    }
+  }
+}
