@@ -1,6 +1,7 @@
 #!/bin/bash
 # Signs in to Cloudflare (your browser opens; click Allow), creates the R2
-# bucket if needed, and deploys. Output is also saved to logs/deploy.log.
+# bucket if needed, offers to set the SETUP_PASSWORD secret, and deploys.
+# Output is also saved to logs/deploy.log.
 cd "$(dirname "$0")/../.." || exit 1
 mkdir -p logs
 {
@@ -19,6 +20,16 @@ mkdir -p logs
   else
     echo "== R2 bucket create FAILED (R2 may need to be enabled in the Cloudflare dashboard)"
     exit 1
+  fi
+  if npx wrangler secret list --format json 2>/dev/null | grep -q '"SETUP_PASSWORD"'; then
+    echo "== SETUP_PASSWORD secret already set"
+  else
+    echo "== SETUP_PASSWORD is not set. Without it, whoever opens the site first sets the password."
+    read -r -p "Set it now (you will be asked to type the password)? [Y/n] " answer
+    case "$answer" in
+      [nN]*) echo "== WARNING: skipped. Anyone who finds the URL first can claim your budget." ;;
+      *) npx wrangler secret put SETUP_PASSWORD || { echo "== secret put FAILED"; exit 1; } ;;
+    esac
   fi
   if npm run deploy; then echo "== deploy OK"; else echo "== deploy FAILED"; fi
   echo "== finished $(date)"

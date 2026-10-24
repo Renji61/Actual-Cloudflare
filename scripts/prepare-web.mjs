@@ -44,12 +44,14 @@ cpSync(buildDir, publicDir, { recursive: true });
 // wrangler.jsonc, so the Netlify-style redirect file is not needed.
 rmSync(join(publicDir, '_redirects'), { force: true });
 
-// The app needs these headers for SharedArrayBuffer (cross-origin isolation).
-const csp =
-  "default-src 'self' blob:; img-src 'self' blob: data:; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src http: https:;";
-writeFileSync(
-  join(publicDir, '_headers'),
-  `/*
+// The app needs these headers for SharedArrayBuffer (cross-origin isolation). The
+// official build ships its own _headers; only write ours if the build has none.
+if (!existsSync(join(publicDir, '_headers'))) {
+  const csp =
+    "default-src 'self' blob:; img-src 'self' blob: data:; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src http: https:;";
+  writeFileSync(
+    join(publicDir, '_headers'),
+    `/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   Content-Security-Policy: ${csp}
@@ -57,7 +59,8 @@ writeFileSync(
 /*.wasm
   Content-Type: application/wasm
 `,
-);
+  );
+}
 
 // Cloudflare rejects single static files larger than 25 MiB.
 const LIMIT = 25 * 1024 * 1024;

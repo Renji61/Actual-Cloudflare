@@ -113,7 +113,10 @@ export function makeServer(config: Partial<ServerConfig> = {}) {
     } else if (body !== undefined) {
       init.body = body;
     }
-    return server.handle(new Request(BASE + path, init));
+    // workers-types types json() as unknown; the tests read untyped JSON bodies.
+    return (await server.handle(new Request(BASE + path, init))) as Omit<Response, 'json'> & {
+      json(): Promise<any>;
+    };
   }
 
   return { server, sql, blobs, call };

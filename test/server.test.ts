@@ -391,23 +391,39 @@ test('end-to-end encryption key setup and reset flow', async () => {
   assert.deepEqual(decoded.messages[0].content, new Uint8Array([1, 2, 3, 4]));
 });
 
-test('changing the password signs out existing sessions', async () => {
+test('changing the password signs out other devices but keeps this one', async () => {
   const { call, token } = await setup();
-  const wrong = await call('POST', '/account/change-password', {
-    json: { token, currentPassword: 'nope', password: 'new-password' },
-  });
-  assert.equal(wrong.status, 400);
+  const otherLogin = await call('POST', '/account/login', { json: { password: PASSWORD } });
+  const otherToken = (await otherLogin.json()).data.token as string;
 
+  const invalid = await call('POST', '/account/change-password', { json: { token, password: '' } });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { status: 'error', reason: 'invalid-password' });
+
+  // The 26.10 web app sends only the new password.
   const ok = await call('POST', '/account/change-password', {
-    json: { token, currentPassword: PASSWORD, password: 'new-password' },
+    json: { token, password: 'new-password' },
   });
   assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { status: 'ok', data: {} });
 
-  const old = await call('GET', '/account/validate', { headers: { 'x-actual-token': token } });
-  assert.equal(old.status, 401);
+  const same = await call('GET', '/account/validate', { headers: { 'x-actual-token': token } });
+  assert.equal(same.status, 200);
+  const other = await call('GET', '/account/validate', { headers: { 'x-actual-token': otherToken } });
+  assert.equal(other.status, 401);
 
   const login = await call('POST', '/account/login', { json: { password: 'new-password' } });
   assert.equal(login.status, 200);
+});
+
+test('change-password reports a conflict when the password changed while hashing', async () => {
+  const { call, token } = await setup();
+  const change = (password: string) =>
+    call('POST', '/account/change-password', { json: { token, password } });
+  const results = await Promise.all([change('first new password'), change('second new password')]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 400]);
+  const lost = results.find(r => r.status === 400)!;
+  assert.deepEqual(await lost.json(), { status: 'error', reason: 'conflict' });
 });
 
 test('server prefs are saved and returned by validate', async () => {
@@ -664,6 +680,34 @@ test('reset-password removes the password but keeps the budgets', async () => {
   assert.equal(list.data.length, 1);
   assert.equal(list.data[0].fileId, fileId);
   assert.ok(s.blobs.files.has(blobKey(fileId)));
+});
+
+test('reset-password re-applies SETUP_PASSWORD when configured', async () => {
+  const s = makeServer({ resetToken: 'secret-token', setupPassword: 'the setup secret' });
+  await s.server.bootstrapFromSecret();
+  const boot = await s.call('POST', '/account/login', { json: { password: 'the setup secret' } });
+  const oldToken = (await boot.json()).data.token as string;
+  // Poll while the reset hashes the password: the server must never look unclaimed.
+  let done = false;
+  const resetting = s
+    .call('POST', '/account/reset-password', { headers: { 'x-reset-token': 'secret-token' } })
+    .finally(() => { done = true; });
+  let polls = 0;
+  while (!done) {
+    const mid = await (await s.call('GET', '/account/needs-bootstrap')).json();
+    assert.equal(mid.data.bootstrapped, true);
+    polls++;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  const reset = await resetting;
+  assert.equal(reset.status, 200);
+  assert.ok(polls > 0);
+  const needs = await (await s.call('GET', '/account/needs-bootstrap')).json();
+  assert.equal(needs.data.bootstrapped, true);
+  const stale = await s.call('GET', '/account/validate', { headers: { 'x-actual-token': oldToken } });
+  assert.equal(stale.status, 401);
+  const login = await s.call('POST', '/account/login', { json: { password: 'the setup secret' } });
+  assert.equal(login.status, 200);
 });
 
 test('reset-password is rate limited', async () => {

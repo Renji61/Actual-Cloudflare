@@ -25,9 +25,11 @@ jobs:
         run: |
           if [ -n "$BASE" ]; then RANGE="$BASE..$HEAD"
           elif [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then RANGE="$AFTER"
-          else RANGE="$BEFORE..$AFTER"; fi
+          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then RANGE="$BEFORE..$AFTER"
+          else RANGE="$AFTER"; fi # BEFORE is gone after a force-push: check every commit
+          commits=$(git rev-list "$RANGE")
           bad=0
-          for c in $(git rev-list "$RANGE"); do
+          for c in $commits; do
             ae=$(git log -1 --format=%ae "$c"); ce=$(git log -1 --format=%ce "$c")
             if [ "$ae" != "$OWNER_EMAIL" ]; then echo "::error::$c author is $ae"; bad=1; fi
             if [ "$ce" != "$OWNER_EMAIL" ] && [ "$ce" != noreply@github.com ]; then echo "::error::$c committer is $ce"; bad=1; fi

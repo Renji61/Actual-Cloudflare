@@ -30,7 +30,7 @@ only) on Cloudflare Workers and serves the official, unmodified Actual web app.
 
 ## Pull requests
 
-- Pull requests are welcome; accepted changes are committed by the maintainer.
+- Pull requests are welcome; accepted changes are committed by the maintainer (the Contributors check only accepts the maintainer's commits).
 - Keep each pull request focused, and make sure `npm test` and
   `npm run typecheck` pass.
 - To follow a new Actual release, see "Updating to a new Actual release" in

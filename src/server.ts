@@ -20,7 +20,7 @@ import {
   toBinary,
 } from './vendor/crdt';
 
-import { empty, json, notFound, preflight, text, withCors } from './http';
+import { json, notFound, preflight, text, withCors } from './http';
 import { hashPassword, isValidPassword, verifyPassword } from './password';
 import type { BlobStore, ServerConfig, Sql } from './storage';
 
@@ -514,27 +514,38 @@ export class ActualServer {
     return notFound(ctx.request.method, ctx.path);
   }
 
+  private insertPasswordAuth(hash: string) {
+    this.sql.run(
+      "INSERT INTO auth (method, display_name, extra_data, active) VALUES ('password', 'Password', ?, 1)",
+      hash,
+    );
+  }
+
   private createPasswordAuth(hash: string): boolean {
     return this.sql.transaction(() => {
       // Check again: another request may have bootstrapped while hashing.
       if (!this.needsBootstrap()) return false;
-      this.sql.run(
-        "INSERT INTO auth (method, display_name, extra_data, active) VALUES ('password', 'Password', ?, 1)",
-        hash,
-      );
+      this.insertPasswordAuth(hash);
       return true;
     });
   }
 
-  /** Sets the password from the optional SETUP_PASSWORD secret, only while no password exists. */
-  async bootstrapFromSecret(): Promise<void> {
+  /** Hash of the SETUP_PASSWORD secret, or null if it is unset or invalid. */
+  private async setupPasswordHash(): Promise<string | null> {
     const password = this.config.setupPassword;
-    if (!password || !this.needsBootstrap()) return;
+    if (!password) return null;
     if (!isValidPassword(password)) {
       console.error('SETUP_PASSWORD is not a valid password; ignoring it.');
-      return;
+      return null;
     }
-    this.createPasswordAuth(await hashPassword(password));
+    return hashPassword(password);
+  }
+
+  /** Sets the password from the optional SETUP_PASSWORD secret, only while no password exists. */
+  async bootstrapFromSecret(): Promise<void> {
+    if (!this.config.setupPassword || !this.needsBootstrap()) return;
+    const hash = await this.setupPasswordHash();
+    if (hash) this.createPasswordAuth(hash);
   }
 
   private async bootstrap(settings: Record<string, any>): Promise<Response> {
@@ -564,10 +575,14 @@ export class ActualServer {
       return json({ status: 'error', reason: 'unauthorized' }, 401);
     }
 
+    // With SETUP_PASSWORD configured, hash it first and swap it in within the same
+    // transaction, so the server is never left unclaimed while PBKDF2 runs.
+    const hash = await this.setupPasswordHash();
     // Users, files and sync data stay, so the owner keeps every budget.
     this.sql.transaction(() => {
       this.sql.run('DELETE FROM auth');
       this.sql.run('DELETE FROM sessions');
+      if (hash) this.insertPasswordAuth(hash);
     });
     return json({ status: 'ok', data: {} });
   }
@@ -586,10 +601,7 @@ export class ActualServer {
       );
     }
 
-    const { password, currentPassword } = ctx.body;
-    if (!isValidPassword(currentPassword)) {
-      return json({ status: 'error', reason: 'invalid-current-password' }, 400);
-    }
+    const { password } = ctx.body;
     if (!isValidPassword(password)) {
       return json({ status: 'error', reason: 'invalid-password' }, 400);
     }
@@ -598,18 +610,19 @@ export class ActualServer {
       "SELECT extra_data FROM auth WHERE method = 'password'",
     );
     if (!auth) return json({ status: 'error', reason: 'no-password-method' }, 400);
-    if (!(await verifyPassword(currentPassword, auth.extra_data))) {
-      return json({ status: 'error', reason: 'invalid-current-password' }, 400);
-    }
 
     const hashed = await hashPassword(password);
     const error = this.sql.transaction(() => {
       const current = this.sql.first<{ extra_data: string }>(
         "SELECT extra_data FROM auth WHERE method = 'password'",
       );
-      if (current?.extra_data !== auth.extra_data) return 'invalid-current-password';
+      if (current?.extra_data !== auth.extra_data) return 'conflict'; // password changed meanwhile
       this.sql.run("UPDATE auth SET extra_data = ? WHERE method = 'password'", hashed);
-      this.sql.run("DELETE FROM sessions WHERE auth_method = 'password'");
+      // Sign out other devices but keep this one, which the app keeps using.
+      this.sql.run(
+        "DELETE FROM sessions WHERE auth_method = 'password' AND token <> ?",
+        session.token,
+      );
       return null;
     });
     if (error) return json({ status: 'error', reason: error }, 400);
