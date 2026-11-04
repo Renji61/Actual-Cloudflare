@@ -391,39 +391,50 @@ test('end-to-end encryption key setup and reset flow', async () => {
   assert.deepEqual(decoded.messages[0].content, new Uint8Array([1, 2, 3, 4]));
 });
 
-test('changing the password signs out other devices but keeps this one', async () => {
+test('changing the password needs the current one and signs out every device', async () => {
   const { call, token } = await setup();
   const otherLogin = await call('POST', '/account/login', { json: { password: PASSWORD } });
   const otherToken = (await otherLogin.json()).data.token as string;
+  const change = (body: object) =>
+    call('POST', '/account/change-password', { json: { token, ...body } });
 
-  const invalid = await call('POST', '/account/change-password', { json: { token, password: '' } });
+  const invalid = await change({ password: '', currentPassword: PASSWORD });
   assert.equal(invalid.status, 400);
   assert.deepEqual(await invalid.json(), { status: 'error', reason: 'invalid-password' });
 
-  // The 26.10 web app sends only the new password.
-  const ok = await call('POST', '/account/change-password', {
-    json: { token, password: 'new-password' },
-  });
+  for (const body of [{}, { currentPassword: 'wrong-password' }]) {
+    const bad = await change({ password: 'new-password', ...body });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), { status: 'error', reason: 'invalid-current-password' });
+  }
+  const stillOld = await call('POST', '/account/login', { json: { password: PASSWORD } });
+  assert.equal(stillOld.status, 200);
+
+  const ok = await change({ password: 'new-password', currentPassword: PASSWORD });
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { status: 'ok', data: {} });
 
-  const same = await call('GET', '/account/validate', { headers: { 'x-actual-token': token } });
-  assert.equal(same.status, 200);
-  const other = await call('GET', '/account/validate', { headers: { 'x-actual-token': otherToken } });
-  assert.equal(other.status, 401);
+  for (const t of [token, otherToken]) {
+    const res = await call('GET', '/account/validate', { headers: { 'x-actual-token': t } });
+    assert.equal(res.status, 401);
+  }
 
   const login = await call('POST', '/account/login', { json: { password: 'new-password' } });
   assert.equal(login.status, 200);
+  const old = await call('POST', '/account/login', { json: { password: PASSWORD } });
+  assert.notEqual(old.status, 200);
 });
 
-test('change-password reports a conflict when the password changed while hashing', async () => {
+test('change-password rejects the loser when two changes race', async () => {
   const { call, token } = await setup();
   const change = (password: string) =>
-    call('POST', '/account/change-password', { json: { token, password } });
+    call('POST', '/account/change-password', {
+      json: { token, password, currentPassword: PASSWORD },
+    });
   const results = await Promise.all([change('first new password'), change('second new password')]);
   assert.deepEqual(results.map(r => r.status).sort(), [200, 400]);
   const lost = results.find(r => r.status === 400)!;
-  assert.deepEqual(await lost.json(), { status: 'error', reason: 'conflict' });
+  assert.deepEqual(await lost.json(), { status: 'error', reason: 'invalid-current-password' });
 });
 
 test('server prefs are saved and returned by validate', async () => {
