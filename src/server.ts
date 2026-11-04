@@ -601,7 +601,10 @@ export class ActualServer {
       );
     }
 
-    const { password } = ctx.body;
+    const { password, currentPassword } = ctx.body;
+    if (!isValidPassword(currentPassword)) {
+      return json({ status: 'error', reason: 'invalid-current-password' }, 400);
+    }
     if (!isValidPassword(password)) {
       return json({ status: 'error', reason: 'invalid-password' }, 400);
     }
@@ -610,19 +613,20 @@ export class ActualServer {
       "SELECT extra_data FROM auth WHERE method = 'password'",
     );
     if (!auth) return json({ status: 'error', reason: 'no-password-method' }, 400);
+    if (!(await verifyPassword(currentPassword, auth.extra_data))) {
+      return json({ status: 'error', reason: 'invalid-current-password' }, 400);
+    }
 
     const hashed = await hashPassword(password);
     const error = this.sql.transaction(() => {
       const current = this.sql.first<{ extra_data: string }>(
         "SELECT extra_data FROM auth WHERE method = 'password'",
       );
-      if (current?.extra_data !== auth.extra_data) return 'conflict'; // password changed meanwhile
+      // The password changed while hashing, so the one just verified is stale.
+      if (current?.extra_data !== auth.extra_data) return 'invalid-current-password';
       this.sql.run("UPDATE auth SET extra_data = ? WHERE method = 'password'", hashed);
-      // Sign out other devices but keep this one, which the app keeps using.
-      this.sql.run(
-        "DELETE FROM sessions WHERE auth_method = 'password' AND token <> ?",
-        session.token,
-      );
+      // The 26.11 web app signs in again with the new password, so every session goes.
+      this.sql.run("DELETE FROM sessions WHERE auth_method = 'password'");
       return null;
     });
     if (error) return json({ status: 'error', reason: error }, 400);

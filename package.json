@@ -40,7 +40,7 @@
     "uuid": "^14.0.3"
   },
   "devDependencies": {
-    "@actual-app/web": "26.10.0",
+    "@actual-app/web": "26.11.0",
     "@cloudflare/workers-types": "^5.20261023.1",
     "@types/node": "^22.20.5",
     "tsx": "^4.23.15",

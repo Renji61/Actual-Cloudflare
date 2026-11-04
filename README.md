@@ -87,7 +87,7 @@ Variables in `wrangler.jsonc` under `vars`. Edit them and deploy again. Values m
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `TOKEN_EXPIRATION` | `"never"` | How long a login stays valid. `"never"` keeps devices signed in until you log out or change the password (changing it signs out your other devices, not the one you change it on). A number is minutes, e.g. `"10080"` for 7 days. |
+| `TOKEN_EXPIRATION` | `"never"` | How long a login stays valid. `"never"` keeps devices signed in until you log out or change the password (changing it signs out every device, including the one you change it on, which signs in again with the new password). A number is minutes, e.g. `"10080"` for 7 days. |
 | `UPLOAD_LIMIT_MB` | `"50"` | Largest budget upload or sync request, in MB. Keep it at 50 or below (Worker memory and request-size limits). |
 
 ## Costs
